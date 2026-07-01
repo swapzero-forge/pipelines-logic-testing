@@ -1,0 +1,35 @@
+name: "[broken] approval runs on plan failure"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: simulate plan failure
+        run: |
+          echo "running terraform plan..."
+          exit 1
+
+  approval:
+    if: >
+      always()
+    needs:
+      - review
+    runs-on: ubuntu-latest
+    environment: approval
+    steps:
+      - name: confirm
+        run: echo "approved - but plan failed, this should not have run"
+
+  apply:
+    if: >
+      always() &&
+      needs.approval.result == 'success'
+    needs:
+      - approval
+    runs-on: ubuntu-latest
+    steps:
+      - name: apply
+        run: echo "applying"

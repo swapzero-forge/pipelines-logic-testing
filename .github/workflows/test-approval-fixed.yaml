@@ -1,0 +1,33 @@
+name: "[fixed] approval blocked on plan failure"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: simulate plan failure
+        run: |
+          echo "running terraform plan..."
+          exit 1
+
+  approval:
+    needs:
+      - review
+    runs-on: ubuntu-latest
+    environment: approval
+    steps:
+      - name: confirm
+        run: echo "approved"
+
+  apply:
+    if: >
+      always() &&
+      needs.approval.result == 'success'
+    needs:
+      - approval
+    runs-on: ubuntu-latest
+    steps:
+      - name: apply
+        run: echo "applying"
