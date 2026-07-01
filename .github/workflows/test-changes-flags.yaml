@@ -1,0 +1,33 @@
+name: "[test] changes flags - caller"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  both-true:
+    name: "both true - both jobs should run"
+    uses: ./.github/workflows/test-changes-flags-callee.yaml
+    with:
+      terraform-changes: true
+      gitops-changes: true
+
+  terraform-false:
+    name: "terraform false - only argocd should run"
+    uses: ./.github/workflows/test-changes-flags-callee.yaml
+    with:
+      terraform-changes: false
+      gitops-changes: true
+
+  gitops-false:
+    name: "gitops false - only terraform should run"
+    uses: ./.github/workflows/test-changes-flags-callee.yaml
+    with:
+      terraform-changes: true
+      gitops-changes: false
+
+  both-false:
+    name: "both false - neither job should run"
+    uses: ./.github/workflows/test-changes-flags-callee.yaml
+    with:
+      terraform-changes: false
+      gitops-changes: false

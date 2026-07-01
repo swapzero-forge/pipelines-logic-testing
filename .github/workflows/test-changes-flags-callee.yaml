@@ -1,0 +1,33 @@
+name: "[test] changes flags - callee"
+
+on:
+  workflow_call:
+    inputs:
+      terraform-changes:
+        type: boolean
+        required: false
+        default: true
+      gitops-changes:
+        type: boolean
+        required: false
+        default: true
+
+jobs:
+  terraform:
+    if: inputs.terraform-changes
+    runs-on: ubuntu-latest
+    steps:
+      - name: terraform apply
+        run: echo "terraform ran"
+
+  argocd:
+    if: >
+      always() &&
+      (needs.terraform.result == 'success' || needs.terraform.result == 'skipped') &&
+      inputs.gitops-changes
+    needs:
+      - terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: argocd sync
+        run: echo "argocd ran"
