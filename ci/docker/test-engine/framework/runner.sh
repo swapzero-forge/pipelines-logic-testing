@@ -77,3 +77,5 @@ bats "${TESTS_DIR}/test.bats" | tee "${ENGINE_TMP_DIR}/bats-${TX_ID}.tap" || tru
 report-tests || true
 
 echo "=== Done transaction for PR=${PR_NUMBER}, REF=${REF} ==="
+
+

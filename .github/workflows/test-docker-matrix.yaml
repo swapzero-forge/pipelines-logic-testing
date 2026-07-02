@@ -33,9 +33,12 @@ jobs:
           # collect directly changed Dockerfiles
           echo "$CHANGED_FILES" | jq -r '.[] | ltrimstr("ci/docker/") | select(endswith(".Dockerfile"))' > /tmp/dockerfiles
 
-          # for other changed files, find which Dockerfile references them
-          echo "$CHANGED_FILES" | jq -r '.[] | ltrimstr("ci/docker/") | select(endswith(".Dockerfile") | not)' | while read -r FILE; do
-            grep -l "$FILE" ci/docker/*.Dockerfile 2>/dev/null | xargs -r -I{} basename {}
+          # for other changed files, grep both the file path and its top-level dir against all Dockerfiles
+          {
+            echo "$CHANGED_FILES" | jq -r '.[] | ltrimstr("ci/docker/") | select(endswith(".Dockerfile") | not)'
+            echo "$CHANGED_FILES" | jq -r '.[] | ltrimstr("ci/docker/") | select(endswith(".Dockerfile") | not) | split("/")[0]'
+          } | sort -u | while read -r ITEM; do
+            grep -l "$ITEM" ci/docker/*.Dockerfile 2>/dev/null | xargs -r -I{} basename {}
           done >> /tmp/dockerfiles
 
           # deduplicate and select matching image configs
