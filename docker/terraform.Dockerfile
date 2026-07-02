@@ -52,3 +52,4 @@ RUN apk add --no-cache --virtual build-azure-cli gcc musl-dev linux-headers pyth
     ln -s /opt/azure-cli/bin/az /usr/bin/ && \
     apk del --purge build-azure-cli
 
+

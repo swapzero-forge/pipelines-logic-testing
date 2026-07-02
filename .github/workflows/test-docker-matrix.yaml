@@ -19,6 +19,10 @@ jobs:
           filters: |
             docker:
               - 'docker/**'
+      - name: Debug changed files
+        env:
+          CHANGED_FILES: ${{ steps.filter.outputs.docker_files }}
+        run: echo "$CHANGED_FILES" | jq .
       - id: build-matrix
         env:
           CHANGED_FILES: ${{ steps.filter.outputs.docker_files }}
