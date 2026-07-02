@@ -30,15 +30,16 @@ jobs:
           ALL_BUILDS=$(yq -o=json ci/docker/builds.yaml)
 
           # extract list of image dirs that have changes, excluding README.md
-          CHANGED_DIRS=$(echo "$CHANGED_FILES" | jq -r '
+          echo "$CHANGED_FILES" | jq -r '
             [.[] | ltrimstr("ci/docker/") | select(endswith("README.md") | not) | split("/")[0]] | unique | .[]
-          ')
+          ' > /tmp/changed_dirs
 
           # select builds for which the context matches a changed dir
-          MATRIX=$(echo "$ALL_BUILDS" | jq -c --arg dirs "$CHANGED_DIRS" '
-            ($dirs | split("\n") | map(select(. != "")) ) as $list |
-            [.[] | select(.context | split("/")[-1] | IN($list[]))]
-          ')
+          MATRIX=$(jq -cRn --arg config "$ALL_BUILDS" '
+            [inputs] as $dirs |
+            $config | fromjson |
+            [.[] | select(.context | split("/")[-1] | IN($dirs[]))]
+          ' /tmp/changed_dirs)
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
   print-matrix:
