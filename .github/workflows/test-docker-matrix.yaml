@@ -12,9 +12,16 @@ jobs:
       matrix: ${{ steps.build-matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v4
+        id: filter
         with:
-          fetch-depth: 2
+          list-files: json
+          filters: |
+            docker:
+              - 'docker/**'
       - id: build-matrix
+        env:
+          CHANGED_FILES: ${{ steps.filter.outputs.docker_files }}
         run: |
           ALL_BUILDS='[
             {"dockerfile":"terraform.Dockerfile","platforms":"linux/amd64,linux/arm64","image_name":"renvc-terraform","project":"renvc-dev"},
@@ -24,8 +31,6 @@ jobs:
             {"dockerfile":"ivion-restore-tools.Dockerfile","platforms":"linux/amd64","image_name":"ivion-restore-tools","project":"renvc-dev"}
           ]'
 
-          CHANGED_FILES=$(git diff --name-only HEAD~1 -- docker/ | jq -Rsc 'split("\n") | map(select(. != ""))')
-
           DOCKERFILES=$(echo "$CHANGED_FILES" | jq -r '[.[] | split("/")[-1] | select(endswith(".Dockerfile"))] | .[]')
 
           for FILE in $(echo "$CHANGED_FILES" | jq -r '[.[] | split("/")[-1] | select(endswith(".Dockerfile") | not)] | .[]'); do
@@ -33,7 +38,7 @@ jobs:
           done
 
           MATRIX=$(echo "$ALL_BUILDS" | jq -c --arg dfs "$DOCKERFILES" '
-            ($dfs | split(" ") | map(select(. != "")) | unique) as $list |
+            ($dfs | [splits(" |\n")] | map(select(. != "")) | unique) as $list |
             [.[] | select(.dockerfile | IN($list[]))]
           ')
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
