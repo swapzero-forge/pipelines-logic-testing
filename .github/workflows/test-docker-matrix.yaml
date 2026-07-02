@@ -35,14 +35,16 @@ jobs:
             {"dockerfile":"ivion-restore-tools.Dockerfile","platforms":"linux/amd64","image_name":"ivion-restore-tools","project":"renvc-dev"}
           ]'
 
-          DOCKERFILES=$(echo "$CHANGED_FILES" | jq -r '[.[] | split("/")[-1] | select(endswith(".Dockerfile"))] | .[]')
+          FILES=$(echo "$CHANGED_FILES" | jq -r '.[] | ltrimstr("ci/docker/")')
 
-          for FILE in $(echo "$CHANGED_FILES" | jq -r '[.[] | split("/")[-1] | select(endswith(".Dockerfile") | not)] | .[]'); do
+          DOCKERFILES=$(echo "$FILES" | grep '\.Dockerfile$' | tr '\n' ' ' || true)
+
+          for FILE in $(echo "$FILES" | grep -v '\.Dockerfile$' || true); do
             DOCKERFILES="$DOCKERFILES $(grep -rl "$FILE" ci/docker/*.Dockerfile 2>/dev/null | xargs -r -I{} basename {})"
           done
 
           MATRIX=$(echo "$ALL_BUILDS" | jq -c --arg dfs "$DOCKERFILES" '
-            ($dfs | [splits(" |\n")] | map(select(. != "")) | unique) as $list |
+            ($dfs | split(" ") | map(select(. != "")) | unique) as $list |
             [.[] | select(.dockerfile | IN($list[]))]
           ')
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
