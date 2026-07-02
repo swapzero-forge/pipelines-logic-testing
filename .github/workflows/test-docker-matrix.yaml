@@ -27,23 +27,19 @@ jobs:
         env:
           CHANGED_FILES: ${{ steps.filter.outputs.docker_files }}
         run: |
-          # full image config - only updated when adding a new image
           ALL_BUILDS=$(yq -o=json ci/docker/builds.yaml)
 
-          # collect directly changed Dockerfiles
-          echo "$CHANGED_FILES" | jq -r '.[] | ltrimstr("ci/docker/") | select(endswith(".Dockerfile"))' > /tmp/dockerfiles
+          # extract list of image dirs that have changes, excluding README.md
+          echo "$CHANGED_FILES" | jq -r '
+            [.[] | ltrimstr("ci/docker/") | select(endswith("README.md") | not) | split("/")[0]] | unique | .[]
+          ' > /tmp/changed_dirs
 
-          # for other changed files, find which Dockerfile references them
-          echo "$CHANGED_FILES" | jq -r '.[] | ltrimstr("ci/docker/") | select(endswith(".Dockerfile") | not)' | while read -r FILE; do
-            grep -l "$FILE" ci/docker/*.Dockerfile 2>/dev/null | xargs -r -I{} basename {}
-          done >> /tmp/dockerfiles
-
-          # deduplicate and select matching image configs
-          MATRIX=$(sort -u /tmp/dockerfiles | jq -cRn --arg config "$ALL_BUILDS" '
-            [inputs] as $list |
+          # select builds for which the context matches a changed dir
+          MATRIX=$(jq -cRn --arg config "$ALL_BUILDS" '
+            [inputs] as $dirs |
             $config | fromjson |
-            [.[] | select(.dockerfile | IN($list[]))]
-          ')
+            [.[] | select(.context | split("/")[-1] | IN($dirs[]))]
+          ' /tmp/changed_dirs)
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
   print-matrix:
