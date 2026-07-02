@@ -3,7 +3,7 @@ name: "[test] docker matrix generation"
 on:
   pull_request:
     paths:
-      - docker/**
+      - ci/docker/**
 
 jobs:
   build-matrix:
@@ -18,7 +18,7 @@ jobs:
           list-files: json
           filters: |
             docker:
-              - 'docker/**'
+              - 'ci/docker/**'
       - name: Debug changed files
         env:
           CHANGED_FILES: ${{ steps.filter.outputs.docker_files }}
@@ -38,7 +38,7 @@ jobs:
           DOCKERFILES=$(echo "$CHANGED_FILES" | jq -r '[.[] | split("/")[-1] | select(endswith(".Dockerfile"))] | .[]')
 
           for FILE in $(echo "$CHANGED_FILES" | jq -r '[.[] | split("/")[-1] | select(endswith(".Dockerfile") | not)] | .[]'); do
-            DOCKERFILES="$DOCKERFILES $(grep -rl "$FILE" docker/*.Dockerfile 2>/dev/null | xargs -r -I{} basename {})"
+            DOCKERFILES="$DOCKERFILES $(grep -rl "$FILE" ci/docker/*.Dockerfile 2>/dev/null | xargs -r -I{} basename {})"
           done
 
           MATRIX=$(echo "$ALL_BUILDS" | jq -c --arg dfs "$DOCKERFILES" '
