@@ -28,13 +28,7 @@ jobs:
           CHANGED_FILES: ${{ steps.filter.outputs.docker_files }}
         run: |
           # full image config - only updated when adding a new image
-          ALL_BUILDS='[
-            {"dockerfile":"terraform.Dockerfile","platforms":"linux/amd64,linux/arm64","image_name":"renvc-terraform","project":"renvc-dev"},
-            {"dockerfile":"test-engine.Dockerfile","platforms":"linux/amd64,linux/arm64","image_name":"test-engine","project":"renvc-dev"},
-            {"dockerfile":"eks-kubectl.Dockerfile","platforms":"linux/amd64","image_name":"eks-kubectl","project":"renvc-prod"},
-            {"dockerfile":"nexus-sync.Dockerfile","platforms":"linux/amd64","image_name":"nexus-sync","project":"renvc-dev"},
-            {"dockerfile":"ivion-restore-tools.Dockerfile","platforms":"linux/amd64","image_name":"ivion-restore-tools","project":"renvc-dev"}
-          ]'
+          ALL_BUILDS=$(yq -o=json ci/docker/builds.yaml)
 
           # collect directly changed Dockerfiles
           echo "$CHANGED_FILES" | jq -r '.[] | ltrimstr("ci/docker/") | select(endswith(".Dockerfile"))' > /tmp/dockerfiles
