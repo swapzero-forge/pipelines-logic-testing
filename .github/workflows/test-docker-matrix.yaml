@@ -1,7 +1,7 @@
 name: "[test] docker matrix generation"
 
 on:
-  push:
+  pull_request:
     paths:
       - docker/**
 
