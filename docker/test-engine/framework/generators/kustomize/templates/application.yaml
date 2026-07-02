@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  # Argo CD Application name comes from the Helm release name
+  name: {{ .Release.Name | quote }}
+  namespace: argocd-dev
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repoURL | quote }}
+    targetRevision: {{ .Values.gitRef | quote }}
+    path: {{ .Values.gitopsPath | quote | clean }}
+  destination:
+    name: {{ .Values.clusterName | quote }}
+{{- if .Values.syncOptions }}
+  syncPolicy:
+    syncOptions:
+{{- range .Values.syncOptions }}
+      - {{ . | quote }}
+{{- end }}
+{{- end }}

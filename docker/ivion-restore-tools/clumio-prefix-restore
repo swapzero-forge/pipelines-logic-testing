@@ -1,0 +1,173 @@
+#!/usr/bin/env python
+import argparse
+import json
+import logging
+import os
+import sys
+import time
+from datetime import datetime
+
+import certifi
+import requests
+from clumioapi import configuration, clumioapi_client
+from clumioapi.exceptions import clumio_exception
+from clumioapi.models import restore_protection_group_s3_asset_v1_request as restore_request
+from clumioapi.models import protection_group_s3_asset_restore_source as restore_source
+from clumioapi.models import protection_group_s3_asset_restore_source_pitr_options as pitr_options
+from clumioapi.models import source_object_filters
+from clumioapi.models import protection_group_restore_target as restore_target
+
+os.environ.setdefault('REQUESTS_CA_BUNDLE', certifi.where())
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(message)s',
+)
+log = logging.getLogger('clumio-restore')
+
+
+class Filter:
+    def __init__(self, query):
+        self.query = query
+
+    @property
+    def query_str(self):
+        return json.dumps(self.query, separators=(',', ':'))
+
+
+HOSTNAME = os.environ.get('CLUMIO_HOSTNAME')
+BUCKET_NAME = os.environ.get('S3_BUCKET')
+PITR_TIMESTAMP = os.environ.get('PITR_TIMESTAMP')
+S3_PREFIX = os.environ.get('S3_PREFIX')
+AWS_REGION = os.environ.get('AWS_REGION')
+
+if not HOSTNAME:
+    log.error("CLUMIO_HOSTNAME environment variable is not defined")
+    raise SystemExit(1)
+
+if not BUCKET_NAME:
+    log.error("S3_BUCKET environment variable is not defined")
+    raise SystemExit(1)
+
+if not PITR_TIMESTAMP:
+    log.error("PITR_TIMESTAMP environment variable is not defined")
+    raise SystemExit(1)
+
+if not S3_PREFIX:
+    log.error("S3_PREFIX environment variable is not defined")
+    raise SystemExit(1)
+
+if not AWS_REGION:
+    log.error("AWS_REGION environment variable is not defined")
+    raise SystemExit(1)
+
+TARGET_PREFIX = os.environ.get('S3_TARGET_PREFIX', '')
+OVERWRITE = True
+ACTIVE_STATUSES = ['queued', 'in_progress']
+
+
+def get_asset(client):
+    pg_filter = Filter({
+        'aws_region': {'$eq': AWS_REGION},
+        'bucket_name': {'$eq': BUCKET_NAME},
+    })
+    result = client.protection_groups_s3_assets_v1.list_protection_group_s3_assets(filter=pg_filter)
+    items = result.Embedded.Items if result.Embedded and result.Embedded.Items else []
+    if len(items) != 1:
+        raise SystemExit(f"expected exactly 1 asset for {BUCKET_NAME}, got {len(items)}")
+    return items[0]
+
+
+def restore_in_progress(client, asset):
+    task_filter = Filter({
+        'status': {'$in': ACTIVE_STATUSES},
+        'category': {'$in': ['restore']},
+        'primary_entity.id': {'$eq': asset.Id},
+    })
+    tasks = client.tasks_v1.list_tasks(filter=task_filter, limit=10)
+    items = tasks.Embedded.Items if tasks.Embedded and tasks.Embedded.Items else []
+    return max(items, key=lambda t: datetime.fromisoformat(t.CreatedTimestamp)) if items else None
+
+
+def submit_restore(client, asset):
+    body = restore_request.RestoreProtectionGroupS3AssetV1Request(
+        Source=restore_source.ProtectionGroupS3AssetRestoreSource(
+            Pitr=pitr_options.ProtectionGroupS3AssetRestoreSourcePitrOptions(
+                ProtectionGroupS3AssetId=asset.Id,
+                RestoreEndTimestamp=PITR_TIMESTAMP,
+            ),
+            ObjectFilters=source_object_filters.SourceObjectFilters(
+                ObjectKeyPrefix=S3_PREFIX,
+                LatestVersionOnly=True,
+            ),
+        ),
+        Target=restore_target.ProtectionGroupRestoreTarget(
+            BucketId=asset.BucketId,
+            EnvironmentId=asset.EnvironmentId,
+            Prefix=TARGET_PREFIX,
+            Overwrite=OVERWRITE,
+            RestoreOriginalStorageClass=True,
+        ),
+    )
+    return client.restored_protection_group_s3_assets_v1.restore_protection_group_s3_asset(body=body)
+
+
+def wait_for_task(client, task_id):
+    while True:
+        task = client.tasks_v1.read_task(task_id=task_id)
+        log.info("task %s: %s %s%%", task_id, task.Status, task.ProgressPercentage)
+        if task.Status not in ACTIVE_STATUSES:
+            break
+        time.sleep(10)
+    if task.Status != 'completed':
+        raise SystemExit(f"restore task {task_id} ended in: {task.Status}")
+    log.info("restore completed")
+
+
+def report():
+    log.info("restore spec:")
+    log.info("%-8s %s", "bucket:", BUCKET_NAME)
+    log.info("%-8s %s", "source:", S3_PREFIX)
+    log.info("%-8s %s", "target:", TARGET_PREFIX if TARGET_PREFIX else S3_PREFIX)
+    log.info("%-8s %s", "pitr:", PITR_TIMESTAMP)
+    log.info("%-8s overwrite=%s", "mode:", OVERWRITE)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dry-run', action='store_true', help='print the restore spec and exit')
+    args = parser.parse_args()
+
+    report()
+    if args.dry_run:
+        return
+
+    config = configuration.Configuration(hostname=HOSTNAME)
+    client = clumioapi_client.ClumioAPIClient(config=config)
+
+    asset = get_asset(client)
+    log.info("asset: %s (%s)", asset.BucketName, asset.Id)
+
+    active = restore_in_progress(client, asset)
+    if active:
+        log.info("restore already in progress for %s, attaching to task %s", asset.BucketName, active.Id)
+        wait_for_task(client, active.Id)
+        return
+
+    restore = submit_restore(client, asset)
+    log.info("restore submitted, task %s", restore.TaskId)
+    wait_for_task(client, restore.TaskId)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except clumio_exception.ClumioException as e:
+        log.error("Clumio API error:\n%s", e)
+        sys.exit(1)
+    except requests.exceptions.RequestException as e:
+        log.error("HTTP/network error: %s", e)
+        sys.exit(1)
+    except ValueError as e:
+        log.error("config error: %s", e)
+        sys.exit(1)

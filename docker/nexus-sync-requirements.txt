@@ -1,0 +1,4 @@
+# direct dependencies only; transitive deps resolved by pip
+requests==2.34.0
+pyyaml==6.0.3
+

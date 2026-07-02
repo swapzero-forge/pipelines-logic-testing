@@ -1,0 +1,19 @@
+# ----- STANDARD (kustomize-based) APPLICATION CHART -----
+
+# Git repository URL used for the kustomize source.
+# Defaults to the main repo for these tests.
+repoURL: https://github.com/NavVis-Internal/renvc-terraform.git
+
+# Path inside repoURL where the kustomization.yaml lives.
+# This should be set per app (for example:
+# "gitops/workloads/external-dns/tests/runner/prereqs").
+gitopsPath: ""
+
+clusterName: "renvc-dev-deck16"
+
+# Additional syncOptions specific to the standard chart.
+# Leave empty for none.
+syncOptions: []
+  # - CreateNamespace=true   # example, if ever needed for a specific kustomize app
+
+gitRef: master

@@ -1,0 +1,4 @@
+boto3==1.43.23
+botocore==1.43.24
+requests==2.34.2
+git+https://github.com/clumio-code/clumio-python-sdk.git@v1.0.3#egg=clumioapi

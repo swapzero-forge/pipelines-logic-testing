@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus-sync"
+version = "0.1.0"
+description = "Nexus state sync -- reconciles Nexus docker proxy repositories and group against a declarative config"
+requires-python = ">=3.11"
+dependencies = [
+    "requests",
+    "pyyaml",
+]
+
+[project.scripts]
+nexus-sync = "nexus_sync.workflow:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

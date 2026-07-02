@@ -1,0 +1,121 @@
+#!/usr/bin/env python
+import json
+import logging
+import os
+import sys
+
+import certifi
+import requests
+from clumioapi import configuration, clumioapi_client
+from clumioapi.exceptions import clumio_exception
+from clumioapi.models import preview_protection_group_s3_asset_v1_request as preview_request
+from clumioapi.models import source_object_filters
+
+os.environ.setdefault('REQUESTS_CA_BUNDLE', certifi.where())
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(message)s',
+)
+log = logging.getLogger('clumio-validate-pitr')
+
+
+class Filter:
+    def __init__(self, query):
+        self.query = query
+
+    @property
+    def query_str(self):
+        return json.dumps(self.query, separators=(',', ':'))
+
+
+HOSTNAME = os.environ.get('CLUMIO_HOSTNAME')
+BUCKET_NAME = os.environ.get('S3_BUCKET')
+PITR_TIMESTAMP = os.environ.get('PITR_TIMESTAMP')
+S3_PREFIX = os.environ.get('S3_PREFIX')
+AWS_REGION = os.environ.get('AWS_REGION')
+
+if not HOSTNAME:
+    log.error("CLUMIO_HOSTNAME environment variable is not defined")
+    raise SystemExit(1)
+
+if not BUCKET_NAME:
+    log.error("S3_BUCKET environment variable is not defined")
+    raise SystemExit(1)
+
+if not PITR_TIMESTAMP:
+    log.error("PITR_TIMESTAMP environment variable is not defined")
+    raise SystemExit(1)
+
+if not S3_PREFIX:
+    log.error("S3_PREFIX environment variable is not defined")
+    raise SystemExit(1)
+
+if not AWS_REGION:
+    log.error("AWS_REGION environment variable is not defined")
+    raise SystemExit(1)
+
+
+def get_asset(client):
+    """
+    Find the single Clumio S3 asset for the bucket.
+    """
+    pg_filter = Filter({
+        'aws_region': {'$eq': AWS_REGION},
+        'bucket_name': {'$eq': BUCKET_NAME},
+    })
+    result = client.protection_groups_s3_assets_v1.list_protection_group_s3_assets(filter=pg_filter)
+    items = result.Embedded.Items if result.Embedded and result.Embedded.Items else []
+    if len(items) != 1:
+        raise SystemExit(f"expected exactly 1 asset for {BUCKET_NAME}, got {len(items)}")
+    return items[0]
+
+
+def prefix_restorable(client, asset):
+    """
+    Preview the restore at the PITR; objects returned means the prefix is restorable.
+    """
+    body = preview_request.PreviewProtectionGroupS3AssetV1Request(
+        IsSyncPreview=True,
+        PitrEndTimestamp=PITR_TIMESTAMP,
+        ObjectFilters=source_object_filters.SourceObjectFilters(
+            ObjectKeyPrefix=S3_PREFIX,
+            LatestVersionOnly=True,
+        ),
+    )
+    preview = client.restored_protection_group_s3_assets_v1.preview_protection_group_s3_asset(
+        protection_group_s3_asset_id=asset.Id,
+        body=body,
+    )
+    objects = preview.Objects or []
+    return len(objects) > 0
+
+
+def main():
+    """
+    Resolve the asset, check the prefix is restorable, emit the PITR.
+    """
+    config = configuration.Configuration(hostname=HOSTNAME)
+    client = clumioapi_client.ClumioAPIClient(config=config)
+
+    asset = get_asset(client)
+    log.info("asset: %s (%s)", asset.BucketName, asset.Id)
+
+    if not prefix_restorable(client, asset):
+        raise SystemExit(f"restore preview returned no objects for {S3_PREFIX} at {PITR_TIMESTAMP} - not restorable")
+
+    print(PITR_TIMESTAMP)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except clumio_exception.ClumioException as e:
+        log.error("Clumio API error:\n%s", e)
+        sys.exit(1)
+    except requests.exceptions.RequestException as e:
+        log.error("HTTP/network error: %s", e)
+        sys.exit(1)
+    except ValueError as e:
+        log.error("config error: %s", e)
+        sys.exit(1)

@@ -1,0 +1,54 @@
+{{- $helm := .Values.helm -}}
+{{- $dest := .Values.destination -}}
+{{- $gitopsPath := .Values.gitopsPath | clean -}}
+{{- $chartRepoURL := $helm.repoURL | trimPrefix "oci://" -}}
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{  .Release.Name | quote }}
+  namespace: argocd-dev
+spec:
+  project: default
+  sources:
+    - repoURL: {{ $chartRepoURL | quote }}
+      chart: {{ $helm.chart | quote }}
+      targetRevision: {{ $helm.version | quote }}
+      helm:
+        releaseName: {{ $helm.releaseName | quote }}
+        namespace: {{ $helm.namespace | quote }}
+        valueFiles:
+{{- with $helm.valueFiles }}
+{{- range . }}
+          {{- $path := printf "%s/%s" $gitopsPath . | clean }}
+          - {{ printf "$values/%s" $path | quote }}
+{{- end }}
+{{- end }}
+          - {{ printf "$values/%s/tests/chart-values/values.yaml" $gitopsPath | quote }}
+{{- with $helm.parameters }}
+        parameters:
+{{- range $name, $value := . }}
+          - name: {{ $name | quote }}
+            value: {{ $value | quote }}
+{{- end }}
+{{- end }}
+    - repoURL: {{ .Values.gitRepo | quote }}
+      targetRevision: {{ .Values.gitRef | quote }}
+      ref: values
+  destination:
+    name: {{ $dest.clusterName | quote }}
+    namespace: {{ $helm.namespace | quote }}
+
+  syncPolicy:
+{{- if .Values.syncOptions }}
+    syncOptions:
+{{- range .Values.syncOptions }}
+      - {{ . | quote }}
+{{- end }}
+{{- end }}
+    retry:
+      limit: 7
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 5m

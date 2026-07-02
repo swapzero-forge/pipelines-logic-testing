@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+import boto3
+import botocore.exceptions
+import json
+import logging
+import os
+import random
+import time
+from datetime import datetime, timedelta, timezone
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
+
+"""
+Simple class to check if a date is within a time range (boundaries excluded)
+"""
+class DatetimeRange:
+    def __init__(self, dt1, dt2):
+        self._dt1 = dt1
+        self._dt2 = dt2
+
+    def __contains__(self, dt):
+        return self._dt1 <= dt <= self._dt2
+
+"""
+Validate required inputs and derive the temporary RDS resource names.
+Execution stops if an input is missing or the PITR timestamp is invalid.
+"""
+
+CLUSTER_NAME = os.environ.get('CLUSTER_NAME')
+PITR_TIMESTAMP = os.environ.get('PITR_TIMESTAMP')
+
+if not CLUSTER_NAME :
+    logger.error("CLUSTER_NAME environment variable is not defined")
+    raise SystemExit(1)
+
+if not PITR_TIMESTAMP :
+    logger.error("PITR_TIMESTAMP environment variable is not defined")
+    raise SystemExit(1)
+
+try:
+    datetime.strptime(PITR_TIMESTAMP, "%Y-%m-%dT%H:%M:%SZ")
+except ValueError as e:
+    logger.error("PITR_TIMESTAMP validation error: %s", e)
+    raise SystemExit(1)
+
+try:
+    INSTANCE_SUFFIX = os.environ.get('TARGET_INSTANCE').removeprefix("ivion-")
+except AttributeError as e:
+    logger.error("INSTANCE_SUFFIX environment variable is not defined: %s", e)
+    raise SystemExit(1)
+
+CLUSTER_ID = f'{CLUSTER_NAME}-c0'
+RESTORE_CLUSTER_ID = f'{CLUSTER_NAME}-c0-restore-{INSTANCE_SUFFIX[:20]}'
+RESTORE_INSTANCE_ID = f'{CLUSTER_NAME}-c0-restore-writer-{INSTANCE_SUFFIX[:20]}'
+BACKUP_VAULT_NAME = f'{CLUSTER_NAME}-backup-vault'
+
+logger.info("restore settings:")
+logger.info("%-18s %s", "cluster:", CLUSTER_ID)
+logger.info("%-18s %s", "restore cluster:", RESTORE_CLUSTER_ID)
+logger.info("%-18s %s", "restore instance:", RESTORE_INSTANCE_ID)
+logger.info("%-18s %s", "backup vault:", BACKUP_VAULT_NAME)
+logger.info("%-18s %s", "pitr:", PITR_TIMESTAMP)
+
+session = boto3.Session()
+rds = session.client('rds')
+backup = session.client('backup')
+
+"""
+Check whether the temporary cluster already exists.
+Execution stops if AWS cannot determine its current state.
+"""
+
+restore_cluster_response = None
+try:
+    restore_cluster_response = rds.describe_db_clusters(DBClusterIdentifier=RESTORE_CLUSTER_ID)
+    logger.info("Cluster %s already exists, skipping restore job.", RESTORE_CLUSTER_ID)
+except rds.exceptions.DBClusterNotFoundFault:
+    logger.info("Cluster %s not found, starting restore.", RESTORE_CLUSTER_ID)
+except Exception as e:
+    logger.error("Failed to check restore cluster existence: %s", e)
+    raise SystemExit(1)
+
+if restore_cluster_response is None:
+    """
+    Resolve the automated recovery point and restore metadata.
+    Execution stops if AWS Backup cannot provide any required restore data.
+    """
+
+    try:
+        automated_backups = rds.describe_db_cluster_automated_backups(
+            Filters=[
+                {
+                    'Name': 'db-cluster-id',
+                    'Values': [CLUSTER_ID]
+                }
+            ]
+        )
+        restore_window = automated_backups['DBClusterAutomatedBackups'][0]['RestoreWindow']
+        recovery_point_arn = automated_backups['DBClusterAutomatedBackups'][0]['AwsBackupRecoveryPointArn']
+    except Exception as e:
+        logger.error("Failed to get automated backup recovery point: %s", e)
+        raise SystemExit(1)
+
+    pitr = datetime.strptime(PITR_TIMESTAMP, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    if pitr not in DatetimeRange(restore_window['EarliestTime'], restore_window['LatestTime']):
+        logger.error("'%s' is not within the backup restore window!", PITR_TIMESTAMP)
+        raise SystemExit(1)
+
+    try:
+        recovery_point = backup.describe_recovery_point(
+            BackupVaultName=BACKUP_VAULT_NAME,
+            RecoveryPointArn=recovery_point_arn
+        )
+        iam_role_arn = recovery_point['IamRoleArn']
+    except Exception as e:
+        logger.error("Failed to describe recovery point: %s", e)
+        raise SystemExit(1)
+
+    try:
+        restore_metadata = backup.get_recovery_point_restore_metadata(
+            BackupVaultName=BACKUP_VAULT_NAME,
+            RecoveryPointArn=recovery_point_arn
+        )['RestoreMetadata']
+    except Exception as e:
+        logger.error("Failed to get recovery point restore metadata: %s", e)
+        raise SystemExit(1)
+
+    # AWS Backup requires camelCase keys for Aurora PITR restore metadata.
+    metadata = {
+        'dbClusterIdentifier': RESTORE_CLUSTER_ID,
+        'engine': restore_metadata['Engine'],
+        'restoreToTime': PITR_TIMESTAMP,
+        'dbSubnetGroupName': restore_metadata['DBSubnetGroupName'],
+        'dbClusterParameterGroupName': restore_metadata['DBClusterParameterGroupName'],
+        'vpcSecurityGroupIds': restore_metadata['VpcSecurityGroupIds'],
+        'kmsKeyId': restore_metadata['KmsKeyId'],
+        'engineMode': restore_metadata['EngineMode'],
+        'engineVersion': restore_metadata['EngineVersion'],
+        'port': restore_metadata['Port'],
+        'enableCloudwatchLogsExports': restore_metadata['EnableCloudwatchLogsExports'],
+        'enableIAMDatabaseAuthentication': restore_metadata['EnableIAMDatabaseAuthentication'],
+        'copyTagsToSnapshot': restore_metadata['CopyTagsToSnapshot'],
+    }
+
+    """
+    Start the asynchronous Aurora cluster restore and wait until AWS begins it.
+    Execution stops if the restore job is rejected or enters a terminal failure state.
+    """
+
+    try:
+        restore_job = backup.start_restore_job(
+            RecoveryPointArn=recovery_point_arn,
+            Metadata=metadata,
+            IamRoleArn=iam_role_arn,
+            ResourceType='Aurora',
+            CopySourceTagsToRestoredResource=False
+        )
+        restore_job_id = restore_job['RestoreJobId']
+        logger.info("Restore job started: %s", restore_job_id)
+    except Exception as e:
+        logger.error("Failed to start restore job: %s", e)
+        raise SystemExit(1)
+
+    logger.info("Waiting for restore job to start running...")
+    while True:
+        try:
+            job = backup.describe_restore_job(RestoreJobId=restore_job_id)
+        except Exception as e:
+            logger.error("Failed to describe restore job: %s", e)
+            raise SystemExit(1)
+        status = job['Status']
+        logger.info("Restore job status: %s", status)
+        if status in ['RUNNING', 'COMPLETED']:
+            delay = random.randint(10, 15)
+            logger.info("Job running/completed, sleeping %ds before checking cluster...", delay)
+            time.sleep(delay)
+            break
+        if status in ('FAILED', 'ABORTED', 'EXPIRED'):
+            logger.error("Restore job %s: %s", status, job.get('StatusMessage', ''))
+            raise SystemExit(1)
+        time.sleep(10)
+
+"""
+Wait for the restored cluster to become available.
+Execution stops if the RDS waiter exhausts its attempts.
+"""
+
+logger.info("Waiting for cluster to become available...")
+try:
+    rds.get_waiter('db_cluster_available').wait(
+        DBClusterIdentifier=RESTORE_CLUSTER_ID,
+        WaiterConfig={'Delay': 30, 'MaxAttempts': 120}
+    )
+except botocore.exceptions.WaiterError as e:
+    logger.error("Cluster waiter failed: %s", e)
+    raise SystemExit(1)
+logger.info("Cluster available.")
+
+"""
+Create the writer instance because AWS Backup restores only the Aurora cluster.
+Execution stops if the instance cannot be created or become available.
+"""
+
+try:
+    rds.describe_db_instances(DBInstanceIdentifier=RESTORE_INSTANCE_ID)
+    logger.info("Instance %s already exists, skipping creation.", RESTORE_INSTANCE_ID)
+except rds.exceptions.DBInstanceNotFoundFault:
+    logger.info("Instance %s not found, creating.", RESTORE_INSTANCE_ID)
+    try:
+        rds.create_db_instance(
+            DBInstanceIdentifier=RESTORE_INSTANCE_ID,
+            DBClusterIdentifier=RESTORE_CLUSTER_ID,
+            DBInstanceClass='db.t3.medium',
+            Engine='aurora-postgresql',
+        )
+    except Exception as e:
+        logger.error("Failed to create DB instance: %s", e)
+        raise SystemExit(1)
+except Exception as e:
+    logger.error("Failed to check instance existence: %s", e)
+    raise SystemExit(1)
+
+logger.info("Waiting for instance to become available...")
+try:
+    rds.get_waiter('db_instance_available').wait(
+        DBInstanceIdentifier=RESTORE_INSTANCE_ID,
+        WaiterConfig={'Delay': 30, 'MaxAttempts': 120}
+    )
+except botocore.exceptions.WaiterError as e:
+    logger.error("Instance waiter failed: %s", e)
+    raise SystemExit(1)
+logger.info("Instance available.")
+
+"""
+Resolve the live and restored cluster endpoints and print them as JSON.
+Execution stops if either endpoint cannot be discovered.
+"""
+
+try:
+    live_cluster = rds.describe_db_clusters(DBClusterIdentifier=CLUSTER_ID)
+    live_endpoint = live_cluster['DBClusters'][0]['Endpoint']
+except Exception as e:
+    logger.error("Failed to get live cluster endpoint: %s", e)
+    raise SystemExit(1)
+
+if restore_cluster_response is None:
+    try:
+        restore_cluster_response = rds.describe_db_clusters(DBClusterIdentifier=RESTORE_CLUSTER_ID)
+    except Exception as e:
+        logger.error("Failed to get restore cluster endpoint: %s", e)
+        raise SystemExit(1)
+
+restore_endpoint = restore_cluster_response['DBClusters'][0]['Endpoint']
+
+print(json.dumps({
+    "live_endpoint": live_endpoint,
+    "restore_endpoint": restore_endpoint,
+}))

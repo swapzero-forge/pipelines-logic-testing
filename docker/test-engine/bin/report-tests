@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Required environment:
+#   PR_NUMBER      - PR number for this workload
+#   TX_ID          - transaction id (same as in runner.sh)
+#   ENGINE_TMP_DIR - temp dir base from runner.sh
+#   GH_TOKEN       - GitHub token (provided by workflow for gh CLI)
+
+: "${PR_NUMBER:?PR_NUMBER is required}"
+: "${TX_ID:?TX_ID is required}"
+: "${ENGINE_TMP_DIR:?ENGINE_TMP_DIR is required}"
+: "${GH_TOKEN:?GH_TOKEN is required}"
+
+TAP_FILE="${ENGINE_TMP_DIR}/bats-${TX_ID}.tap"
+COMMENT_FILE="${ENGINE_TMP_DIR}/comment-${TX_ID}.md"
+
+# If there is no TAP output, there is nothing to report.
+if [ ! -f "${TAP_FILE}" ]; then
+  echo "report-tests: no TAP file at ${TAP_FILE}, skipping."
+  exit 0
+fi
+
+# Convert TAP output to Markdown.
+tap-to-markdown < "${TAP_FILE}" > "${COMMENT_FILE}"
+
+# Post the Markdown as a comment on the PR.
+gh pr comment "${PR_NUMBER}" --body-file "${COMMENT_FILE}"

@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+import boto3
+import os
+import botocore.exceptions
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
+
+"""
+Validate required inputs and derive the temporary RDS resource names.
+Execution stops if the cluster or target instance is not provided.
+"""
+
+CLUSTER_NAME = os.environ.get('CLUSTER_NAME')
+
+if not CLUSTER_NAME :
+    logger.error("CLUSTER_NAME environment variable is not defined")
+    raise SystemExit(1)
+
+try:
+    INSTANCE_SUFFIX = os.environ.get('TARGET_INSTANCE').removeprefix("ivion-")
+except AttributeError as e:
+    logger.error("INSTANCE_SUFFIX environment variable is not defined: %s", e)
+    raise SystemExit(1)
+
+TEARDOWN_CLUSTER_ID = f'{CLUSTER_NAME}-c0-restore-{INSTANCE_SUFFIX[:20]}'
+TEARDOWN_INSTANCE_ID = f'{CLUSTER_NAME}-c0-restore-writer-{INSTANCE_SUFFIX[:20]}'
+
+logger.info("teardown settings:")
+logger.info("%-18s %s", "cluster:", TEARDOWN_CLUSTER_ID)
+logger.info("%-18s %s", "instance:", TEARDOWN_INSTANCE_ID)
+
+session = boto3.Session()
+rds = session.client('rds')
+
+"""
+Delete the temporary writer instance before deleting its cluster.
+Execution stops if deletion fails or the instance does not disappear in time.
+"""
+
+try:
+    rds.describe_db_instances(DBInstanceIdentifier=TEARDOWN_INSTANCE_ID)
+    try:
+        rds.delete_db_instance(
+            DBInstanceIdentifier=TEARDOWN_INSTANCE_ID,
+            SkipFinalSnapshot=True,
+        )
+    except Exception as e:
+        logger.error("Failed to delete instance: %s", e)
+        raise SystemExit(1)
+    logger.info("Waiting for instance to be deleted...")
+    try:
+        rds.get_waiter('db_instance_deleted').wait(
+            DBInstanceIdentifier=TEARDOWN_INSTANCE_ID,
+            WaiterConfig={'Delay': 30, 'MaxAttempts': 120}
+        )
+    except botocore.exceptions.WaiterError as e:
+        logger.error("Instance delete waiter failed: %s", e)
+        raise SystemExit(1)
+    logger.info("Instance deleted.")
+except rds.exceptions.DBInstanceNotFoundFault:
+    logger.info("Instance %s not found, skipping.", TEARDOWN_INSTANCE_ID)
+except Exception as e:
+    logger.error("Failed to check instance existence: %s", e)
+    raise SystemExit(1)
+
+"""
+Delete the temporary Aurora cluster without creating a final snapshot.
+Execution stops if deletion fails or the cluster does not disappear in time.
+"""
+
+try:
+    rds.describe_db_clusters(DBClusterIdentifier=TEARDOWN_CLUSTER_ID)
+    try:
+        rds.delete_db_cluster(
+            DBClusterIdentifier=TEARDOWN_CLUSTER_ID,
+            SkipFinalSnapshot=True,
+        )
+    except Exception as e:
+        logger.error("Failed to delete cluster: %s", e)
+        raise SystemExit(1)
+    logger.info("Waiting for cluster to be deleted...")
+    try:
+        rds.get_waiter('db_cluster_deleted').wait(
+            DBClusterIdentifier=TEARDOWN_CLUSTER_ID,
+            WaiterConfig={'Delay': 30, 'MaxAttempts': 120}
+        )
+    except botocore.exceptions.WaiterError as e:
+        logger.error("Cluster delete waiter failed: %s", e)
+        raise SystemExit(1)
+    logger.info("Cluster deleted.")
+except rds.exceptions.DBClusterNotFoundFault:
+    logger.info("Cluster %s not found, skipping.", TEARDOWN_CLUSTER_ID)
+except Exception as e:
+    logger.error("Failed to check cluster existence: %s", e)
+    raise SystemExit(1)

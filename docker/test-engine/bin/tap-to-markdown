@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+import sys
+import re
+
+tap_text = sys.stdin.read()
+lines = tap_text.splitlines()
+
+rows = []  # (num, status_icon, desc)
+
+pattern = re.compile(
+    r"^(ok|not ok)\s+(\d+)\s+(.*?)(?:\s+#\s*(skip).*)?$"
+)
+
+for line in lines:
+    line = line.strip()
+    if not line:
+        continue
+    # Skip plan lines like "1..N"
+    if re.match(r"^\d+\.\.\d+$", line):
+        continue
+
+    m = pattern.match(line)
+    if not m:
+        continue
+
+    status_word, num, desc, skip_word = m.groups()
+    skip = skip_word is not None
+
+    # Icons:
+    # - ok normally: :white_check_mark: passed
+    # - ok with "# skip": :large_blue_circle: skipped
+    # - not ok: :x: failed
+    if status_word == "ok":
+        if skip:
+            status_icon = ":large_blue_circle: skipped"
+        else:
+            status_icon = ":white_check_mark: passed"
+    else:
+        status_icon = ":x: failed"
+
+    # Escape pipes so they don't break the table
+    desc = desc.replace("|", "\\|") or "(no description)"
+
+    rows.append((num, status_icon, desc))
+
+rows_md = "\n".join(
+    f"| {num} | {status_icon} | {desc} |"
+    for (num, status_icon, desc) in rows
+)
+
+template = """### TAP test summary
+
+| # | Status | Description |
+|---|--------|-------------|
+{rows}
+
+<details>
+<summary>Raw TAP output</summary>
+
+```tap
+{tap}
+```
+</details>
+"""
+md = template.format(
+rows=rows_md,
+tap=tap_text.rstrip(),
+)
+
+print(md)

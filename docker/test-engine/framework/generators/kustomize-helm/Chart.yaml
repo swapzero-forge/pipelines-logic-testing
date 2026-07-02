@@ -1,0 +1,6 @@
+apiVersion: v2
+name: kustomize-to-helm-adapter
+description: "Adapter that transforms kustomize-based Argo CD Applications into Helm-based Applications for tests (test engine generator)"
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

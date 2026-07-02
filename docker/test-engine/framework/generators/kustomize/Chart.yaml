@@ -1,0 +1,6 @@
+apiVersion: v2
+name: kustomize-application-standard
+description: "Generates an Argo CD Application for a kustomize path (test engine generator)"
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

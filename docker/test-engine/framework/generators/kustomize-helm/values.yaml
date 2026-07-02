@@ -1,0 +1,39 @@
+# workload gitops repo path
+gitopsPath: ""
+
+gitRepo: "https://github.com/NavVis-Internal/renvc-terraform.git"
+
+gitRef: ""
+
+helm:
+  # Chart repository / registry URL (for example, OCI or HTTP).
+  # This is separate from the Git repoURL in transformer/values.yaml.
+  repoURL: ""
+
+  # Chart name, version, release name, and namespace.
+  # If empty, templates or calling code must provide appropriate values.
+  chart: ""
+  version: ""
+  releaseName: ""
+  namespace: ""
+
+  # List of value files relative to valuesSource.path, to be fed into Helm.
+  valueFiles: []
+
+  # Additional Helm parameter overrides (name=value).
+  parameters: {}
+
+destination:
+  # Destination cluster name for the transformer Application.
+  # If empty, template should fall back to root destinationCluster
+  # or its own default (for example "renvc-dev-deck16").
+  clusterName: "renvc-dev-deck16"
+
+# Transformer-specific syncOptions.
+# This is the one place where we keep a default:
+# transformer Applications should always have CreateNamespace=true by default.
+syncOptions:
+  - CreateNamespace=true
+  - ServerSideApply=true
+  # You can append more items here if the transformer chart
+  # needs additional sync options.

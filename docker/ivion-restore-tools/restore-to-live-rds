@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -eou pipefail
+
+if [ -z "$LIVE_ENDPOINT" ]; then
+  echo "LIVE_ENDPOINT is not set"
+  exit 1
+fi
+
+if [ -z "$DATABASE_TO_RESTORE" ]; then
+  echo "DATABASE_TO_RESTORE is not set"
+  exit 1
+fi
+
+pg_restore \
+  --host $LIVE_ENDPOINT \
+  --port 5432 \
+  --dbname $DATABASE_TO_RESTORE \
+  --clean \
+  --if-exists \
+  --single-transaction \
+  --no-acl \
+  --verbose \
+  $DATABASE_TO_RESTORE.dump \
+  2>&1 | tee restore.log
+
+echo "Restore complete."

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -eou pipefail
+
+if [ -z "$RESTORE_ENDPOINT" ]; then
+  echo "RESTORE_ENDPOINT is not set"
+  exit 1
+fi
+
+if [ -z "$DATABASE_TO_RESTORE" ]; then
+  echo "DATABASE_TO_RESTORE is not set"
+  exit 1
+fi
+
+pg_dump \
+  --host $RESTORE_ENDPOINT \
+  --port 5432 \
+  --dbname $DATABASE_TO_RESTORE \
+  --format=custom \
+  --no-acl \
+  --file=$DATABASE_TO_RESTORE.dump
+
+echo "Dump complete: $DATABASE_TO_RESTORE.dump"

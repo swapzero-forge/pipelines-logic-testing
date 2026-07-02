@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Collect candidate PR/workload pairs (Renovate PRs touching workload kustomizations)
+PRS_JSON="$(gh pr list \
+  --state open \
+  --label renovate \
+  --json number,headRefName,baseRefName,files \
+  --jq '
+    [
+      .[] as $PR
+      | $PR.files[]
+      | select(.path | test("^gitops/workloads/[^/]+/kustomization.yaml$"))
+      | {
+          pr:       $PR.number,
+          ref:      $PR.headRefName,
+          base_ref: $PR.baseRefName,
+          path:     (.path | sub("/kustomization.yaml$"; ""))
+        }
+    ]
+  ')"
+
+# Filter to only those that have tests/test.bats in that PR's branch
+echo "${PRS_JSON}" \
+  | jq -c '.[]' \
+  | while read -r ITEM; do
+
+      read -r REF WORKLOAD_PATH < <( echo "${ITEM}" | jq -r '"\(.ref) \(.path)"' )
+
+      # Check for tests/test.bats in origin/<REF> at that workload path
+      if git cat-file -e "origin/${REF}:${WORKLOAD_PATH}/tests/test.bats" 2>/dev/null; then
+        echo "${ITEM}"
+      fi
+    done | jq -sc
