@@ -33,9 +33,11 @@ jobs:
           # collect directly changed Dockerfiles
           echo "$CHANGED_FILES" | jq -r '.[] | ltrimstr("ci/docker/") | select(endswith(".Dockerfile"))' > /tmp/dockerfiles
 
-          # for other changed files, grep every path component (files and dirs) against all Dockerfiles
-          echo "$CHANGED_FILES" | jq -r '.[] | ltrimstr("ci/docker/") | select(endswith(".Dockerfile") | not)' \
-            | jq -nR '[inputs] | map(split("/")) | add | unique | .[]' | while read -r ITEM; do
+          # for other changed files, grep both the file path and its top-level dir against all Dockerfiles
+          {
+            echo "$CHANGED_FILES" | jq -r '.[] | ltrimstr("ci/docker/") | select(endswith(".Dockerfile") | not)'
+            echo "$CHANGED_FILES" | jq -r '.[] | ltrimstr("ci/docker/") | select(endswith(".Dockerfile") | not) | split("/")[0]'
+          } | sort -u | while read -r ITEM; do
             grep -l "$ITEM" ci/docker/*.Dockerfile 2>/dev/null | xargs -r -I{} basename {}
           done >> /tmp/dockerfiles
 
