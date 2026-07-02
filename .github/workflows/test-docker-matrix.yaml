@@ -27,22 +27,21 @@ jobs:
         env:
           CHANGED_FILES: ${{ steps.filter.outputs.docker_files }}
         run: |
-          ALL_BUILDS='[
-            {"dockerfile":"terraform.Dockerfile","platforms":"linux/amd64,linux/arm64","image_name":"renvc-terraform","project":"renvc-dev"},
-            {"dockerfile":"test-engine.Dockerfile","platforms":"linux/amd64,linux/arm64","image_name":"test-engine","project":"renvc-dev"},
-            {"dockerfile":"eks-kubectl.Dockerfile","platforms":"linux/amd64","image_name":"eks-kubectl","project":"renvc-prod"},
-            {"dockerfile":"nexus-sync.Dockerfile","platforms":"linux/amd64","image_name":"nexus-sync","project":"renvc-dev"},
-            {"dockerfile":"ivion-restore-tools.Dockerfile","platforms":"linux/amd64","image_name":"ivion-restore-tools","project":"renvc-dev"}
-          ]'
+          # full image config - only updated when adding a new image
+          ALL_BUILDS=$(yq -o=json ci/docker/builds.yaml)
 
-          DOCKERFILES=$(echo "$CHANGED_FILES" | jq -r '[.[] | split("/")[-1] | select(endswith(".Dockerfile"))] | .[]')
+          # collect directly changed Dockerfiles
+          echo "$CHANGED_FILES" | jq -r '.[] | ltrimstr("ci/docker/") | select(endswith(".Dockerfile"))' > /tmp/dockerfiles
 
-          for FILE in $(echo "$CHANGED_FILES" | jq -r '[.[] | split("/")[-1] | select(endswith(".Dockerfile") | not)] | .[]'); do
-            DOCKERFILES="$DOCKERFILES $(grep -rl "$FILE" ci/docker/*.Dockerfile 2>/dev/null | xargs -r -I{} basename {})"
-          done
+          # for other changed files, find which Dockerfile references them
+          echo "$CHANGED_FILES" | jq -r '.[] | ltrimstr("ci/docker/") | select(endswith(".Dockerfile") | not)' | while read -r FILE; do
+            grep -l "$FILE" ci/docker/*.Dockerfile 2>/dev/null | xargs -r -I{} basename {}
+          done >> /tmp/dockerfiles
 
-          MATRIX=$(echo "$ALL_BUILDS" | jq -c --arg dfs "$DOCKERFILES" '
-            ($dfs | [splits(" |\n")] | map(select(. != "")) | unique) as $list |
+          # deduplicate and select matching image configs
+          MATRIX=$(sort -u /tmp/dockerfiles | jq -cRn --arg config "$ALL_BUILDS" '
+            [inputs] as $list |
+            $config | fromjson |
             [.[] | select(.dockerfile | IN($list[]))]
           ')
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"

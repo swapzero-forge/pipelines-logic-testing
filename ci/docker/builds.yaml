@@ -1,0 +1,24 @@
+- dockerfile: terraform.Dockerfile
+  platforms: linux/amd64,linux/arm64
+  image_name: renvc-terraform
+  project: renvc-dev
+
+- dockerfile: test-engine.Dockerfile
+  platforms: linux/amd64,linux/arm64
+  image_name: test-engine
+  project: renvc-dev
+
+- dockerfile: eks-kubectl.Dockerfile
+  platforms: linux/amd64
+  image_name: eks-kubectl
+  project: renvc-prod
+
+- dockerfile: nexus-sync.Dockerfile
+  platforms: linux/amd64
+  image_name: nexus-sync
+  project: renvc-dev
+
+- dockerfile: ivion-restore-tools.Dockerfile
+  platforms: linux/amd64
+  image_name: ivion-restore-tools
+  project: renvc-dev
